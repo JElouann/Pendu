@@ -2,6 +2,8 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System.Diagnostics.Metrics;
+using System.Text;
 
 #region Swagger
 var builder = WebApplication.CreateBuilder(args);
@@ -107,16 +109,18 @@ catch
 #region Nouveau
 
 string authorizedGuess = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-string wordToFind = "";
-List<string> pastTries = new();
-Dictionary<int, Game> games = new();
+StringBuilder currentRevealedWord = new();
 
 // Create game with SQL
 app.MapPost("/game/new", (string word) =>
 {
+    currentRevealedWord = new StringBuilder(word);
+
+
     // Verify if word is valid
     foreach (char c in word.ToCharArray())
     {
+        currentRevealedWord[word.IndexOf(c)] = '-';
         if (!authorizedGuess.Contains(c))
         {
             Console.WriteLine("Word is not valid.");
@@ -133,7 +137,6 @@ app.MapPost("/game/new", (string word) =>
     command.Parameters.AddWithValue("$word", word);
 
     reader = command.ExecuteReader();
-    wordToFind = word;
     return $"Welcome in game. The word to find is {word}";
 });
 
@@ -178,7 +181,7 @@ app.MapPost("/game/guessLetter", (string letter, int id) =>
 
     command.Parameters.AddWithValue("$letter", letter);
     command.Parameters.AddWithValue("$id", id);
-    
+
     reader = command.ExecuteReader();
 
     // Check if guess is good or bad
@@ -193,8 +196,15 @@ app.MapPost("/game/guessLetter", (string letter, int id) =>
 
     while (reader.Read())
     {
-        if (reader.GetString(0).Contains(letter)) return "True";
-        else return "False";
+        if (reader.GetString(0).Contains(letter))
+        {
+            for (int i = 0; i < reader.GetString(0).Length; i++)
+            {
+                if (reader.GetString(0)[i] == char.Parse(letter)) currentRevealedWord[i] = char.Parse(letter);
+            }
+            return $"Good guess ! \n Currently : {currentRevealedWord.ToString()}";
+        }
+        else return "Wrong !";
     }
 
     return "";
@@ -237,13 +247,30 @@ app.MapPost("/game/guessWord", (string word, int id) =>
     while (reader.Read())
     {
         if (reader.GetString(0) == word) return $"Good job !";
-        else return $"False";
+        else return $"Wrong !";
     }
     return "";
 });
 
+// Delete
+app.MapPost("/game/delete", (int id) =>
+{
+    // Add letter to Attempts table
+    command = connection.CreateCommand();
+    command.CommandText = """
+        delete from attempts where gameId = $id;
+        delete from games where id = $id;
+    """;
+
+    command.Parameters.AddWithValue("$id", id);
+
+    reader = command.ExecuteReader();
+
+    return $"Succesfully deleted game {id}";
+});
+
 // History
-app.MapGet("/game/history", () =>
+app.MapGet("/game/history", (int id) =>
 {
     string triesList = "Current game's history: \n";
 
@@ -251,10 +278,13 @@ app.MapGet("/game/history", () =>
     command = connection.CreateCommand();
     command.CommandText = """
         select word
-        from attempts
+        from attempts where gameId = $id;
     """;
 
+    command.Parameters.AddWithValue("$id", id);
+
     reader = command.ExecuteReader();
+
 
     while (reader.Read())
     {
@@ -264,6 +294,5 @@ app.MapGet("/game/history", () =>
 });
 
 app.Run();
-record Game(string Word, int ID);
 #endregion
 
